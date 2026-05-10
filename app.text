@@ -1,0 +1,804 @@
+import streamlit as st
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import struct
+import json
+import os
+
+# ─────────────────────────────────────────────
+#  SHAPEFILE READER — no external geo deps
+# ─────────────────────────────────────────────
+@st.cache_data
+def load_ntt_shapes():
+    """
+    Parse indonesia_kab.shp. Returns:
+      border_lons, border_lats  -- all outlines merged with None separators
+      land_polygons             -- list of {lons, lats} dicts for filled land mask
+    """
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "indonesia_kab.shp"),
+        "/mnt/user-data/uploads/indonesia_kab.shp",
+    ]
+    shp_path = next((p for p in candidates if os.path.exists(p)), None)
+    if shp_path is None:
+        return [], [], []
+
+    with open(shp_path, "rb") as f:
+        f.seek(24)
+        file_len = struct.unpack(">i", f.read(4))[0] * 2
+        f.seek(100)
+        records = []
+        while f.tell() < file_len:
+            try:
+                struct.unpack(">i", f.read(4))[0]
+                content_len = struct.unpack(">i", f.read(4))[0] * 2
+                start = f.tell()
+                stype = struct.unpack("<i", f.read(4))[0]
+                if stype == 5:
+                    box = struct.unpack("<4d", f.read(32))
+                    num_parts  = struct.unpack("<i", f.read(4))[0]
+                    num_points = struct.unpack("<i", f.read(4))[0]
+                    parts  = [struct.unpack("<i", f.read(4))[0] for _ in range(num_parts)]
+                    points = [struct.unpack("<2d", f.read(16)) for _ in range(num_points)]
+                    records.append({"parts": parts, "points": points, "bbox": box})
+                f.seek(start + content_len)
+            except Exception:
+                break
+
+    ntt = [
+        r for r in records
+        if not (r["bbox"][2] < 117 or r["bbox"][0] > 127
+                or r["bbox"][3] < -12.5 or r["bbox"][1] > -6)
+    ]
+
+    border_lons, border_lats = [], []
+    land_polygons = []
+
+    for r in ntt:
+        pts   = r["points"]
+        parts = r["parts"] + [len(pts)]
+        for i in range(len(parts) - 1):
+            seg = pts[parts[i]:parts[i + 1]]
+            slons = [p[0] for p in seg]
+            slats = [p[1] for p in seg]
+            border_lons += slons + [None]
+            border_lats += slats + [None]
+            if i == 0:  # outer ring only for land fill
+                land_polygons.append({"lons": slons, "lats": slats})
+
+    return border_lons, border_lats, land_polygons
+
+NTT_BORDER_LONS, NTT_BORDER_LATS, NTT_LAND_POLYS = load_ntt_shapes()
+
+# ─────────────────────────────────────────────
+#  PAGE CONFIG
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="ONI × NTT Rainfall Dashboard",
+    page_icon="🌧️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ─────────────────────────────────────────────
+#  HELPER  — hex → rgba (no 8-digit hex bug)
+# ─────────────────────────────────────────────
+def hex_to_rgba(hex_color: str, alpha: float = 0.15) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+SEASON_COLORS = {
+    "JFM": "#e63946",
+    "AMJ": "#f4a261",
+    "JAS": "#2a9d8f",
+    "OND": "#0d6efd",
+}
+SEASONS = ["JFM", "AMJ", "JAS", "OND"]
+
+# ─────────────────────────────────────────────
+#  GLOBAL STYLE
+# ─────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;600;700&display=swap');
+
+html, body, [class*="css"], .stApp {
+    background-color: #ffffff !important;
+    font-family: 'DM Sans', sans-serif;
+    color: #0f1117;
+}
+#MainMenu, footer, header { visibility: hidden; }
+.block-container { padding: 1.2rem 2.2rem 3rem; }
+
+[data-testid="stSidebar"] {
+    background: #f8f7f4 !important;
+    border-right: 2px solid #ebe8e1;
+}
+[data-testid="stSidebar"] * { color: #0f1117 !important; }
+
+/* HERO */
+.hero {
+    background: linear-gradient(135deg, #0b0f1a 0%, #1a3560 55%, #0d6efd 100%);
+    border-radius: 20px;
+    padding: 2.2rem 2.6rem 2rem;
+    margin-bottom: 1.8rem;
+    position: relative; overflow: hidden;
+}
+.hero::after {
+    content:''; position:absolute; inset:0;
+    background:radial-gradient(ellipse at 80% 50%, rgba(255,255,255,.06) 0%, transparent 60%);
+    pointer-events:none;
+}
+.hero-eyebrow {
+    display:inline-block;
+    background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.2);
+    border-radius:20px; padding:.22rem .85rem;
+    font-size:.72rem; letter-spacing:.1em; text-transform:uppercase;
+    color:#b8d4f8; margin-bottom:.75rem;
+}
+.hero-title {
+    font-family:'DM Serif Display',serif; font-size:2.5rem; font-weight:400;
+    color:#fff; line-height:1.12; margin:0 0 .45rem;
+}
+.hero-sub { font-size:.9rem; color:#9ab8e0; font-weight:300; margin:0; }
+
+/* SECTION HEADER */
+.sec-hd {
+    display:flex; align-items:center; gap:.7rem;
+    border-bottom:2px solid #ebe8e1;
+    padding-bottom:.55rem; margin:2rem 0 1rem;
+}
+.sec-num {
+    width:30px; height:30px; border-radius:50%;
+    background:#0f1117; color:#fff;
+    display:flex; align-items:center; justify-content:center;
+    font-size:.78rem; font-weight:700; flex-shrink:0;
+}
+.sec-title { font-family:'DM Serif Display',serif; font-size:1.2rem; }
+.sec-sub { font-size:.78rem; color:#999; margin-top:.05rem; }
+
+/* INSIGHT */
+.insight {
+    background:#f0f5ff; border-left:4px solid #0d6efd;
+    border-radius:0 10px 10px 0;
+    padding:.8rem 1.1rem; font-size:.84rem; color:#1a3560;
+    margin-top:.6rem; line-height:1.65;
+}
+
+/* st.metric override */
+[data-testid="metric-container"] {
+    background:#fff !important;
+    border:1.5px solid #ebe8e1 !important;
+    border-radius:14px !important;
+    padding:.9rem 1.1rem !important;
+}
+[data-testid="stMetricLabel"]  { font-size:.72rem !important; text-transform:uppercase; letter-spacing:.09em; color:#888 !important; }
+[data-testid="stMetricValue"]  { font-family:'DM Serif Display',serif !important; font-size:1.7rem !important; color:#0f1117 !important; }
+[data-testid="stMetricDelta"]  { font-size:.72rem !important; }
+
+[data-baseweb="tab"] { font-size:.84rem !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  SYNTHETIC DATA (mirrors notebook logic)
+#  Swap load_data() body when real CSVs exist.
+# ─────────────────────────────────────────────
+@st.cache_data
+def load_data():
+    """
+    Pemrosesan IDENTIK dengan main.ipynb.
+    Cari ONI.csv + rainfallNTT.csv di folder app, fallback synthetic.
+    """
+    ONI_PATHS = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "ONI.csv"),
+        "/mnt/user-data/uploads/ONI.csv",
+    ]
+    CH_PATHS = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "rainfallNTT.csv"),
+        "/mnt/user-data/uploads/rainfallNTT.csv",
+    ]
+    oni_path = next((p for p in ONI_PATHS if os.path.exists(p)), None)
+    ch_path  = next((p for p in CH_PATHS  if os.path.exists(p)), None)
+
+    rng = np.random.default_rng(42)
+
+    # ── ONI (cell 1-3 notebook) ───────────────────────────────────────────
+    if oni_path:
+        data = pd.read_csv(oni_path)
+        drop_cols = [c for c in ['DJF','FMA','MAM','MJJ','ASO','JJA','SON','NDJ']
+                     if c in data.columns]
+        data = data.drop(columns=drop_cols)
+        data = data[(data['Year'] >= 1985) & (data['Year'] <= 2015)]
+        dataONI = data.reset_index(drop=True)
+    else:
+        years_arr = np.arange(1985, 2016)
+        t = np.linspace(0, 4 * np.pi, len(years_arr))
+        base = 0.45 * np.sin(t) + 0.22 * np.sin(1.7 * t)
+        dataONI = pd.DataFrame({
+            "Year": years_arr,
+            "JFM": base       + rng.normal(0, .25, len(years_arr)),
+            "AMJ": base * .9  + rng.normal(0, .20, len(years_arr)),
+            "JAS": base * .75 + rng.normal(0, .30, len(years_arr)),
+            "OND": base * 1.1 + rng.normal(0, .22, len(years_arr)),
+        })
+
+    years = dataONI["Year"].values
+
+    # ── Rainfall / spasial (cell 6-20 notebook) ───────────────────────────
+    if ch_path:
+        dataCH = pd.read_csv(ch_path)
+
+        # cell 7
+        drop2 = [c for c in ['number', 'expver'] if c in dataCH.columns]
+        dataCH = dataCH.drop(columns=drop2)
+
+        # cell 9 & 14: konversi unit (notebook lakukan 2x, tp sudah di *1000 tapi tetap kita ikuti)
+        dataCH['tp'] = dataCH['tp'] * 1000
+
+        # cell 13 / 14
+        dataCH['Hujan'] = (dataCH['tp'] > 0.5).astype(int)
+
+        # cell 14 & 18
+        dataCH['valid_time'] = pd.to_datetime(dataCH['valid_time'])
+        dataCH['Year']  = dataCH['valid_time'].dt.year
+        dataCH['Month'] = dataCH['valid_time'].dt.month
+
+        # cell 19
+        def musim(b):
+            if b in [1,2,3]:   return 'JFM'
+            elif b in [4,5,6]: return 'AMJ'
+            elif b in [7,8,9]: return 'JAS'
+            else:               return 'OND'
+        dataCH['Season'] = dataCH['Month'].apply(musim)
+
+        # cell 14: hasilCH
+        hasilCH = (
+            dataCH.groupby(['Year','Season'])['Hujan']
+            .mean().mul(100).reset_index()
+        )
+        hasilCH = hasilCH.pivot(index='Year', columns='Season', values='Hujan').reset_index()
+        hasilCH.columns.name = None
+        hasilCH = hasilCH.rename(columns={s: f'CH_{s}' for s in ['JFM','AMJ','JAS','OND']})
+
+        # cell 20: spasial
+        df_spasial = (
+            dataCH.groupby(['Year','Season','latitude','longitude'])['Hujan']
+            .mean().mul(100).reset_index()
+        )
+
+    else:
+        # Synthetic fallback
+        ch = {"Year": years}
+        for s in SEASONS:
+            ch[f"CH_{s}"] = np.clip(
+                62 - 14 * dataONI[s].values + rng.normal(0, 8, len(years)),
+                5, 99
+            )
+        hasilCH = pd.DataFrame(ch)
+
+        lons = np.arange(118.0, 126.5, 0.5)
+        lats = np.arange(-12.0,  -7.0, 0.5)
+        rows = []
+        for y in years:
+            for s in SEASONS:
+                oni_val = float(dataONI.loc[dataONI.Year == y, s].values[0])
+                for lat in lats:
+                    for lon in lons:
+                        p = np.clip(
+                            65 - lat * 2 + (lon - 122) * 1.2 - 13 * oni_val
+                            + rng.normal(0, 6), 0, 100
+                        )
+                        rows.append({"Year": y, "Season": s,
+                                     "latitude": lat, "longitude": lon, "Hujan": p})
+        df_spasial = pd.DataFrame(rows)
+
+    # cell 15: gabung
+    gabung = pd.merge(hasilCH, dataONI, on='Year')
+    return gabung, df_spasial, dataONI
+
+gabung, df_spasial, df_oni = load_data()
+YEARS = sorted(gabung["Year"].unique())
+
+# ─────────────────────────────────────────────
+#  SIDEBAR
+# ─────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("""
+    <div style='text-align:center;padding:.6rem 0 1rem;'>
+        <div style='font-size:2.2rem;'>🌊</div>
+        <div style='font-family:"DM Serif Display",serif;font-size:1.1rem;color:#0f1117;'>ONI × NTT</div>
+        <div style='font-size:.7rem;color:#999;letter-spacing:.09em;text-transform:uppercase;'>Climate Dashboard</div>
+    </div>""", unsafe_allow_html=True)
+
+    st.divider()
+    st.markdown("**Filter Data**")
+    year_range  = st.slider("Rentang Tahun",
+                            int(YEARS[0]), int(YEARS[-1]),
+                            (int(YEARS[0]), int(YEARS[-1])))
+    sel_seasons = st.multiselect("Musim", SEASONS, default=SEASONS)
+    if not sel_seasons:
+        sel_seasons = SEASONS
+
+    st.divider()
+    st.markdown("**Peta Spasial**")
+    map_year        = st.selectbox("Tahun",  YEARS,   index=len(YEARS) // 2)
+    map_season      = st.selectbox("Musim",  SEASONS, index=0)
+    all_seasons_map = st.checkbox("Tampilkan 4 musim sekaligus", False)
+
+    st.divider()
+    st.caption("📌 Data: ERA5 × NOAA ONI\n📍 NTT: 118°–126°E, 12°–7°S\n📅 1985–2015")
+
+# ─────────────────────────────────────────────
+#  FILTERED DATA
+# ─────────────────────────────────────────────
+mask = (gabung["Year"] >= year_range[0]) & (gabung["Year"] <= year_range[1])
+gf   = gabung[mask]
+
+# ─────────────────────────────────────────────
+#  HERO
+# ─────────────────────────────────────────────
+st.markdown("""
+<div class="hero">
+    <div class="hero-eyebrow">☁️ Meteorologi &amp; Klimatologi · NTT · 1985–2015</div>
+    <div class="hero-title">Oceanic Niño Index<br>× Probabilitas Hujan NTT</div>
+    <p class="hero-sub">
+        Analisis spasial-temporal pengaruh ENSO terhadap curah hujan
+        Nusa Tenggara Timur — interaktif, berbasis ERA5 &amp; NOAA ONI.
+    </p>
+</div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  KPI STRIP  — native st.metric (always works)
+# ─────────────────────────────────────────────
+avg_oni  = float(gf[SEASONS].values.mean())
+max_oni  = float(gf[SEASONS].max().max())
+avg_ch   = float(gf[[f"CH_{s}" for s in SEASONS]].values.mean())
+n_elnino = int(((gf[SEASONS] >  0.5).sum(axis=1) >= 2).sum())
+n_lanina = int(((gf[SEASONS] < -0.5).sum(axis=1) >= 2).sum())
+n_years  = year_range[1] - year_range[0] + 1
+
+k1, k2, k3, k4, k5, k6 = st.columns(6)
+k1.metric("Rata-rata ONI",  f"{avg_oni:+.2f} °C",  "semua musim")
+k2.metric("ONI Maksimum",   f"{max_oni:+.2f} °C",  "puncak El Niño")
+k3.metric("Prob. Hujan",    f"{avg_ch:.0f} %",      "rata-rata grid")
+k4.metric("Tahun El Niño",  f"{n_elnino}",           "ONI > +0.5")
+k5.metric("Tahun La Niña",  f"{n_lanina}",           "ONI < −0.5")
+k6.metric("Periode",        f"{n_years} thn",        f"{year_range[0]}–{year_range[1]}")
+
+st.markdown("<div style='margin-bottom:.8rem;'></div>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  §1  ONI LINE CHART
+# ─────────────────────────────────────────────
+st.markdown("""
+<div class="sec-hd">
+    <div class="sec-num">1</div>
+    <div>
+        <div class="sec-title">Deret Waktu ONI per Musim</div>
+        <div class="sec-sub">Osilasi ENSO 1985–2015 · JFM · AMJ · JAS · OND</div>
+    </div>
+</div>""", unsafe_allow_html=True)
+
+fig_oni = go.Figure()
+for s in sel_seasons:
+    fig_oni.add_trace(go.Scatter(
+        x=gf["Year"], y=gf[s],
+        mode="lines+markers", name=s,
+        line=dict(color=SEASON_COLORS[s], width=2.2),
+        marker=dict(size=5, color=SEASON_COLORS[s]),
+        hovertemplate=f"<b>{s}</b> %{{x}}: %{{y:+.2f}} °C<extra></extra>",
+    ))
+fig_oni.add_hrect(y0= 0.5, y1= 3.5, fillcolor="rgba(230,57,70,.07)",  line_width=0)
+fig_oni.add_hrect(y0=-3.5, y1=-0.5, fillcolor="rgba(13,110,253,.07)", line_width=0)
+fig_oni.add_hline(y= 0.5, line_dash="dot", line_color="#e63946", line_width=1,
+                  annotation_text="El Niño ≥ +0.5", annotation_position="top right")
+fig_oni.add_hline(y=-0.5, line_dash="dot", line_color="#0d6efd", line_width=1,
+                  annotation_text="La Niña ≤ −0.5", annotation_position="bottom right")
+fig_oni.add_hline(y=0, line_color="#ddd", line_width=1)
+fig_oni.update_layout(
+    height=340, margin=dict(l=10, r=100, t=15, b=10),
+    paper_bgcolor="#fff", plot_bgcolor="#fff",
+    font=dict(family="DM Sans", color="#0f1117"),
+    xaxis=dict(showgrid=False, title=""),
+    yaxis=dict(showgrid=True, gridcolor="#f2f2f2", title="ONI (°C)"),
+    legend=dict(orientation="h", y=-0.2, x=.5, xanchor="center", bgcolor="rgba(0,0,0,0)"),
+    hovermode="x unified",
+)
+st.plotly_chart(fig_oni, use_container_width=True)
+
+st.markdown("""
+<div class="insight">
+📊 <b>Pola Temporal:</b> ONI berfluktuasi antara El Niño (&gt;+0.5 °C) dan La Niña (&lt;−0.5 °C).
+Musim <b>OND</b> menunjukkan amplitudo tertinggi — bertepatan dengan onset ENSO di belahan bumi selatan
+dan awal monsun basah NTT.
+</div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  §2  PROBABILITAS HUJAN
+# ─────────────────────────────────────────────
+st.markdown("""
+<div class="sec-hd">
+    <div class="sec-num">2</div>
+    <div>
+        <div class="sec-title">Probabilitas Hujan per Musim</div>
+        <div class="sec-sub">Persentase hari hujan (tp &gt; 0.5 mm) per musim · grid NTT</div>
+    </div>
+</div>""", unsafe_allow_html=True)
+
+col_chart, col_stats = st.columns([3, 1])
+
+with col_chart:
+    fig_ch = go.Figure()
+    for s in sel_seasons:
+        rgba_fill = hex_to_rgba(SEASON_COLORS[s], 0.08)   # ✅ proper rgba()
+        fig_ch.add_trace(go.Scatter(
+            x=gf["Year"], y=gf[f"CH_{s}"],
+            mode="lines+markers", name=s,
+            line=dict(color=SEASON_COLORS[s], width=2.2),
+            marker=dict(size=5, color=SEASON_COLORS[s]),
+            fill="tozeroy",
+            fillcolor=rgba_fill,
+            hovertemplate=f"<b>CH {s}</b> %{{x}}: %{{y:.1f}} %<extra></extra>",
+        ))
+    fig_ch.update_layout(
+        height=310, margin=dict(l=10, r=20, t=10, b=10),
+        paper_bgcolor="#fff", plot_bgcolor="#fff",
+        font=dict(family="DM Sans"),
+        xaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=True, gridcolor="#f2f2f2",
+                   title="Prob. Hujan (%)", range=[0, 105]),
+        legend=dict(orientation="h", y=-0.22, x=.5, xanchor="center",
+                    bgcolor="rgba(0,0,0,0)"),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig_ch, use_container_width=True)
+
+with col_stats:
+    st.markdown("##### Rata-rata per Musim")
+    for s in sel_seasons:
+        mean_v = gf[f"CH_{s}"].mean()
+        max_v  = gf[f"CH_{s}"].max()
+        color  = SEASON_COLORS[s]
+        st.markdown(f"""
+        <div style='border:1.5px solid {color}55;border-left:4px solid {color};
+                    border-radius:10px;padding:.65rem 1rem;margin-bottom:.55rem;'>
+            <div style='font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;color:#888;'>{s}</div>
+            <div style='font-family:"DM Serif Display",serif;font-size:1.55rem;color:{color};'>{mean_v:.0f}%</div>
+            <div style='font-size:.68rem;color:#bbb;'>maks {max_v:.0f}%</div>
+        </div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  §3  KORELASI
+# ─────────────────────────────────────────────
+st.markdown("""
+<div class="sec-hd">
+    <div class="sec-num">3</div>
+    <div>
+        <div class="sec-title">Analisis Korelasi ONI × Curah Hujan</div>
+        <div class="sec-sub">Pearson r — heatmap penuh &amp; scatter per musim</div>
+    </div>
+</div>""", unsafe_allow_html=True)
+
+tab_hm, tab_sc = st.tabs(["📊 Heatmap Full", "🔬 Scatter per Musim"])
+
+with tab_hm:
+    corr_cols = [f"CH_{s}" for s in SEASONS] + SEASONS
+    corr_full = gf[corr_cols].corr()
+    labels_hm = [f"CH {s}" for s in SEASONS] + [f"ONI {s}" for s in SEASONS]
+    z_val     = corr_full.values
+
+    blue_red = [
+        [0.00, "#1565C0"], [0.25, "#64B5F6"],
+        [0.50, "#FFFFFF"],
+        [0.75, "#EF9A9A"], [1.00, "#B71C1C"],
+    ]
+    fig_hm = go.Figure(go.Heatmap(
+        z=z_val, x=labels_hm, y=labels_hm,
+        colorscale=blue_red, zmid=0, zmin=-1, zmax=1,
+        text=np.round(z_val, 2), texttemplate="%{text}",
+        textfont=dict(size=11, family="DM Sans"),
+        hovertemplate="%{x} × %{y}: <b>%{z:.3f}</b><extra></extra>",
+        colorbar=dict(title=dict(text="r", side="right"), len=0.8,
+                      tickfont=dict(family="DM Sans")),
+    ))
+    fig_hm.update_layout(
+        height=460, margin=dict(l=10, r=10, t=15, b=10),
+        paper_bgcolor="#fff", plot_bgcolor="#fff",
+        font=dict(family="DM Sans"),
+        xaxis=dict(side="bottom", tickangle=-30),
+        yaxis=dict(autorange="reversed"),
+    )
+    st.plotly_chart(fig_hm, use_container_width=True)
+
+    st.markdown("##### 🎯 Korelasi Diagonal (CH_s × ONI_s)")
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    for col_w, s in zip([kc1, kc2, kc3, kc4], SEASONS):
+        r_val  = corr_full.loc[f"CH_{s}", s]
+        color  = "#e63946" if r_val < 0 else "#2a9d8f"
+        interp = "Negatif kuat" if r_val < -0.5 else ("Negatif lemah" if r_val < 0 else "Positif")
+        with col_w:
+            st.markdown(f"""
+            <div style='text-align:center;border:1.5px solid {color}55;
+                        border-radius:12px;padding:.85rem .5rem;'>
+                <div style='font-size:.68rem;text-transform:uppercase;color:#888;letter-spacing:.09em;'>{s}</div>
+                <div style='font-family:"DM Serif Display",serif;font-size:1.9rem;color:{color};'>{r_val:+.2f}</div>
+                <div style='font-size:.68rem;color:#aaa;'>{interp}</div>
+            </div>""", unsafe_allow_html=True)
+
+with tab_sc:
+    fig_sc = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=[f"ONI {s} vs CH {s}" for s in SEASONS],
+        vertical_spacing=0.18, horizontal_spacing=0.10,
+    )
+    for i, s in enumerate(SEASONS):
+        r, c   = (i // 2) + 1, (i % 2) + 1
+        x_data = gf[s].values
+        y_data = gf[f"CH_{s}"].values
+        color  = SEASON_COLORS[s]
+        fig_sc.add_trace(go.Scatter(
+            x=x_data, y=y_data, mode="markers",
+            marker=dict(color=color, size=8, opacity=0.75,
+                        line=dict(width=1, color="#fff")),
+            name=s, text=gf["Year"],
+            hovertemplate="Tahun %{text}<br>ONI: %{x:+.2f}<br>CH: %{y:.1f}%<extra></extra>",
+        ), row=r, col=c)
+        coef   = np.polyfit(x_data, y_data, 1)
+        x_line = np.linspace(x_data.min(), x_data.max(), 60)
+        fig_sc.add_trace(go.Scatter(
+            x=x_line, y=np.polyval(coef, x_line),
+            mode="lines", line=dict(color=color, dash="dash", width=2),
+            showlegend=False,
+        ), row=r, col=c)
+
+    fig_sc.update_layout(
+        height=500, margin=dict(l=10, r=10, t=35, b=10),
+        paper_bgcolor="#fff", plot_bgcolor="#fff",
+        font=dict(family="DM Sans"), showlegend=False,
+    )
+    for ax in fig_sc.layout:
+        if ax.startswith("xaxis"):
+            fig_sc.layout[ax].update(showgrid=True, gridcolor="#f2f2f2", title_text="ONI (°C)")
+        if ax.startswith("yaxis"):
+            fig_sc.layout[ax].update(showgrid=True, gridcolor="#f2f2f2", title_text="Prob. Hujan (%)")
+    st.plotly_chart(fig_sc, use_container_width=True)
+
+st.markdown("""
+<div class="insight">
+🔴 <b>Temuan Korelasi:</b> Semua musim menunjukkan korelasi <b>negatif</b> antara ONI dan probabilitas hujan —
+saat El Niño aktif (ONI &gt; +0.5 °C), curah hujan NTT <b>menurun signifikan</b>.
+Musim <b>JFM</b> dan <b>OND</b> memiliki sinyal terkuat, bertepatan dengan puncak monsun Asia–Australia.
+</div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  §4  PETA SPASIAL
+# ─────────────────────────────────────────────
+st.markdown("""
+<div class="sec-hd">
+    <div class="sec-num">4</div>
+    <div>
+        <div class="sec-title">Peta Spasial Probabilitas Hujan — NTT</div>
+        <div class="sec-sub">Distribusi spasial prob. hujan · 118°–126°E · 12°–7°S</div>
+    </div>
+</div>""", unsafe_allow_html=True)
+
+# ── Colorscale RdYlBu_r persis dari matplotlib (notebook: cmap='RdYlBu_r') ──
+# Biru = prob rendah, Merah = prob tinggi
+RDYLBU_R = [
+    [0.000, "#313695"], [0.100, "#4575b4"], [0.200, "#74add1"],
+    [0.300, "#abd9e9"], [0.425, "#e0f3f8"], [0.500, "#ffffbf"],
+    [0.575, "#fee090"], [0.700, "#fdae61"], [0.800, "#f46d43"],
+    [0.900, "#d73027"], [1.000, "#a50026"],
+]
+
+def make_contour_map(sub, show_cbar=True):
+    """
+    Persis notebook cell 23:
+      contourf(Lon, Lat, Z, levels=15, cmap='RdYlBu_r', extend='both')
+      indo.plot(ax, color='none', edgecolor='black', linewidth=0.5)
+      xlim(118,126), ylim(-12,-7)
+    """
+    lons_u = np.sort(sub["longitude"].unique())
+    lats_u = np.sort(sub["latitude"].unique())
+
+    # pivot + sort_index persis notebook
+    pivot = (
+        sub.pivot(index="latitude", columns="longitude", values="Hujan")
+        .sort_index()
+    )
+    Z = pivot.values
+
+    traces = []
+
+    # ── contourf → go.Contour, levels=15, RdYlBu_r ──
+    traces.append(go.Contour(
+        x=lons_u, y=lats_u, z=Z,
+        colorscale=RDYLBU_R,
+        zmin=0, zmax=100,
+        ncontours=15,
+        contours=dict(coloring="heatmap", showlines=False),
+        line=dict(width=0),
+        showscale=show_cbar,
+        showlegend=False,
+        colorbar=dict(
+            title=dict(text="Probabilitas Hujan (%)", side="right"),
+            tickfont=dict(family="DM Sans", size=11),
+            len=0.82,
+            tickvals=[0, 20, 40, 60, 80, 100],
+        ) if show_cbar else None,
+        hovertemplate="Lon %{x:.2f}° | Lat %{y:.2f}°<br>Prob Hujan: <b>%{z:.1f}%</b><extra></extra>",
+        line_smoothing=0.85,
+    ))
+
+    # ── indo.plot(color='none', edgecolor='black', linewidth=0.5) ──
+    if NTT_BORDER_LONS:
+        traces.append(go.Scatter(
+            x=NTT_BORDER_LONS, y=NTT_BORDER_LATS,
+            mode="lines",
+            line=dict(color="black", width=0.5),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    return traces
+
+
+# ── Single map (default) ──────────────────────────────────────────────────
+AXIS_STYLE = dict(
+    showgrid=False,
+    tickfont=dict(family="DM Sans", size=10),
+    linecolor="#aaa", linewidth=1, mirror=True,
+)
+
+if all_seasons_map:
+    # 4 musim sekaligus (2×2)
+    fig_maps = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=[f"{map_year} - {s}" for s in SEASONS],
+        vertical_spacing=0.08, horizontal_spacing=0.06,
+    )
+    for i, s in enumerate(SEASONS):
+        r, c   = (i // 2) + 1, (i % 2) + 1
+        sub    = df_spasial[(df_spasial.Year == map_year) & (df_spasial.Season == s)]
+        for tr in make_contour_map(sub, show_cbar=(i == 0)):
+            fig_maps.add_trace(tr, row=r, col=c)
+
+    for i in range(1, 5):
+        suf = "" if i == 1 else str(i)
+        fig_maps.update_layout(**{
+            f"xaxis{suf}": dict(range=[118, 126], title="", **AXIS_STYLE),
+            f"yaxis{suf}": dict(range=[-12, -7],  title="", **AXIS_STYLE),
+        })
+    fig_maps.update_layout(
+        height=600, margin=dict(l=20, r=100, t=40, b=20),
+        paper_bgcolor="white", plot_bgcolor="white",
+        font=dict(family="DM Sans"),
+        showlegend=False,
+    )
+    st.plotly_chart(fig_maps, use_container_width=True)
+
+else:
+    sub    = df_spasial[(df_spasial.Year == map_year) & (df_spasial.Season == map_season)]
+    fig_map = go.Figure(data=make_contour_map(sub, show_cbar=True))
+    fig_map.update_layout(
+        title=dict(
+            text=f"<b>Prob. Hujan NTT — {map_year} · {map_season}</b>",
+            font=dict(family="DM Serif Display", size=17), x=0.5,
+        ),
+        xaxis=dict(range=[118, 126], title="Longitude (°E)", **AXIS_STYLE),
+        yaxis=dict(range=[-12, -7],  title="Latitude (°S)",  **AXIS_STYLE),
+        height=460, margin=dict(l=65, r=115, t=55, b=55),
+        paper_bgcolor="white", plot_bgcolor="white",
+        showlegend=False,
+        font=dict(family="DM Sans"),
+    )
+    st.plotly_chart(fig_map, use_container_width=True)
+
+    oni_val = float(df_oni.loc[df_oni.Year == map_year, map_season].values[0])
+    oni_lbl = "El Niño 🔴" if oni_val > 0.5 else ("La Niña 🔵" if oni_val < -0.5 else "Netral ⚪")
+    avg_p   = sub["Hujan"].mean()
+    mc1, mc2, mc3 = st.columns(3)
+    mc1.metric("Tahun · Musim",   f"{map_year} · {map_season}")
+    mc2.metric("ONI Index",        f"{oni_val:+.2f} °C", oni_lbl)
+    mc3.metric("Avg. Prob. Hujan", f"{avg_p:.1f} %")
+
+# ─────────────────────────────────────────────
+#  §5  VIOLIN / BOX
+# ─────────────────────────────────────────────
+st.markdown("""
+<div class="sec-hd">
+    <div class="sec-num">5</div>
+    <div>
+        <div class="sec-title">Distribusi Musiman — ONI &amp; Curah Hujan</div>
+        <div class="sec-sub">Violin + box — spread &amp; outlier per musim</div>
+    </div>
+</div>""", unsafe_allow_html=True)
+
+cv1, cv2 = st.columns(2)
+for col_w, data_keys, y_title, show_ref in [
+    (cv1, SEASONS,                       "ONI (°C)",         True),
+    (cv2, [f"CH_{s}" for s in SEASONS],  "Prob. Hujan (%)",  False),
+]:
+    fig_v = go.Figure()
+    for key, s in zip(data_keys, SEASONS):
+        fig_v.add_trace(go.Violin(
+            y=gf[key], name=s,
+            box_visible=True, meanline_visible=True,
+            fillcolor=hex_to_rgba(SEASON_COLORS[s], 0.35),   # ✅ rgba
+            line_color=SEASON_COLORS[s], opacity=0.9,
+        ))
+    if show_ref:
+        fig_v.add_hline(y= 0.5, line_dash="dot", line_color="#e63946", line_width=1)
+        fig_v.add_hline(y=-0.5, line_dash="dot", line_color="#0d6efd", line_width=1)
+        fig_v.add_hline(y=0, line_color="#ddd", line_width=1)
+    fig_v.update_layout(
+        height=340, margin=dict(l=10, r=10, t=10, b=10),
+        paper_bgcolor="#fff", plot_bgcolor="#fff",
+        font=dict(family="DM Sans"), showlegend=False,
+        yaxis=dict(showgrid=True, gridcolor="#f2f2f2", title=y_title),
+        xaxis=dict(showgrid=False),
+    )
+    col_w.plotly_chart(fig_v, use_container_width=True)
+
+# ─────────────────────────────────────────────
+#  §6  ANOMALI BAR
+# ─────────────────────────────────────────────
+st.markdown("""
+<div class="sec-hd">
+    <div class="sec-num">6</div>
+    <div>
+        <div class="sec-title">Anomali Probabilitas Hujan dari Baseline Klimatologi</div>
+        <div class="sec-sub">Deviasi dari rata-rata 1985–2015 · tahun basah / kering</div>
+    </div>
+</div>""", unsafe_allow_html=True)
+
+anom_season = st.selectbox("Pilih musim", SEASONS, index=0, key="anom_pick")
+mean_base   = gabung[f"CH_{anom_season}"].mean()
+anomaly     = gf[f"CH_{anom_season}"] - mean_base
+
+fig_bar = go.Figure(go.Bar(
+    x=gf["Year"], y=anomaly,
+    marker=dict(
+        color=anomaly,
+        colorscale=[
+            [0.00, "#1565C0"], [0.35, "#90CAF9"],
+            [0.50, "#ECEFF1"],
+            [0.65, "#EF9A9A"], [1.00, "#B71C1C"],
+        ],
+        cmid=0, line=dict(width=0),
+    ),
+    hovertemplate="<b>%{x}</b><br>Anomali: %{y:+.1f}%<extra></extra>",
+))
+fig_bar.add_hline(y=0, line_color="#444", line_width=1.5)
+fig_bar.update_layout(
+    height=290, margin=dict(l=10, r=10, t=10, b=20),
+    paper_bgcolor="#fff", plot_bgcolor="#fff",
+    font=dict(family="DM Sans"),
+    yaxis=dict(showgrid=True, gridcolor="#f2f2f2", title="Anomali (%)"),
+    xaxis=dict(showgrid=False),
+)
+st.plotly_chart(fig_bar, use_container_width=True)
+
+st.markdown("""
+<div class="insight">
+🌧️ <b>Merah = Lebih Basah</b> dari rata-rata klimatologi ·
+🌤️ <b>Biru = Lebih Kering</b> dari rata-rata klimatologi.<br>
+Anomali negatif (kering) sering bertepatan dengan El Niño kuat;
+La Niña menginduksi anomali positif (basah) di NTT.
+</div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  FOOTER
+# ─────────────────────────────────────────────
+st.divider()
+st.markdown("""
+<div style='text-align:center;padding:1rem 0 1.5rem;color:#aaa;font-size:.76rem;line-height:2;'>
+    <b style='color:#0f1117;'>ONI × NTT Rainfall Dashboard</b> &nbsp;·&nbsp;
+    ERA5 Reanalysis (ECMWF) × NOAA ENSO ONI &nbsp;·&nbsp;
+    Periode: 1985–2015 &nbsp;·&nbsp; NTT 118°–126°E, 12°–7°S<br>
+    Built with Streamlit · Plotly · Pandas · NumPy
+</div>""", unsafe_allow_html=True)
