@@ -426,14 +426,14 @@ with st.sidebar:
     all_years   = sorted(spasial['Year'].unique())
     all_seasons = [s for s in SEASON_ORDER if s in spasial['Season'].unique()]
 
-    st.markdown("**🗓️ Filter Tahun**")
+    st.markdown("**Filter Tahun**")
     sel_year = st.selectbox("Pilih Tahun", all_years, index=len(all_years)//2)
 
-    st.markdown("**🌤️ Filter Musim**")
+    st.markdown("**Filter Musim**")
     sel_season = st.selectbox("Pilih Musim", all_seasons,
                               format_func=lambda s: f"{s}  ({SEASON_MONTHS[s]})")
 
-    st.markdown("**📊 Perbandingan Musim**")
+    st.markdown("**Perbandingan Musim**")
     multi_seasons = st.multiselect("Pilih Musim (Time Series)",
                                    all_seasons, default=all_seasons,
                                    format_func=lambda s: f"{s} ({SEASON_MONTHS[s]})")
@@ -1031,7 +1031,7 @@ st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 st.markdown("""
 <div style='text-align:center; padding:16px 0; color:#888; font-size:0.8rem;'>
     <b>Dashboard Probabilitas Hujan di NTT</b> &nbsp;·&nbsp;
-    Data: ERA5 Reanalysis &amp; ONI NOAA &nbsp;·&nbsp;
+    Data: ERA5 Reanalysis dan ONI NOAA &nbsp;·&nbsp;
     Analisis: 1985–2015 &nbsp;·&nbsp;
     Wilayah: Nusa Tenggara Timur (118°–126°E, 7°–12°S)
 </div>
