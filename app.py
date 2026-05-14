@@ -130,6 +130,141 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"],
 
 /* ── Remove default streamlit padding in places ── */
 .block-container { padding-top: 1rem !important; }
+
+/* ══════════════════════════════════════════════
+   MOBILE RESPONSIVE — max-width: 768px
+   ══════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+    /* Block container padding */
+    .block-container {
+        padding: 0.5rem 0.75rem !important;
+    }
+
+    /* Hero banner */
+    .hero-banner {
+        padding: 16px 16px !important;
+        border-radius: 12px !important;
+        margin-bottom: 16px !important;
+    }
+    .hero-banner h1 {
+        font-size: 1.2rem !important;
+    }
+    .hero-banner p {
+        font-size: 0.82rem !important;
+    }
+
+    /* Section header */
+    .section-header {
+        font-size: 0.88rem !important;
+        padding: 8px 12px !important;
+    }
+
+    /* Metric cards — stack 2 per row */
+    [data-testid="metric-container"] {
+        padding: 10px 10px !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="metric-container"] label {
+        font-size: 0.75rem !important;
+    }
+    [data-testid="metric-container"] [data-testid="stMetricValue"] {
+        font-size: 1.1rem !important;
+    }
+
+    /* Columns — force single column stack on very small screens */
+    [data-testid="column"] {
+        min-width: 100% !important;
+        width: 100% !important;
+    }
+
+    /* Tab labels smaller */
+    [data-testid="stTabs"] [role="tab"] {
+        font-size: 0.78rem !important;
+        padding: 6px 8px !important;
+    }
+
+    /* Sidebar toggle easier tap */
+    [data-testid="collapsedControl"] {
+        top: 10px !important;
+    }
+
+    /* Sidebar width on mobile */
+    [data-testid="stSidebar"] {
+        min-width: 260px !important;
+        max-width: 80vw !important;
+    }
+
+    /* Info box font */
+    .info-box {
+        font-size: 0.8rem !important;
+        padding: 10px 12px !important;
+    }
+
+    /* Divider margin */
+    .custom-divider {
+        margin: 12px 0 !important;
+    }
+
+    /* Plotly charts — ensure they don't overflow */
+    .js-plotly-plot, .plotly, .plot-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow-x: auto !important;
+    }
+
+    /* Matplotlib figures */
+    img {
+        max-width: 100% !important;
+        height: auto !important;
+    }
+
+    /* Dataframe / table overflow */
+    [data-testid="stDataFrame"] {
+        overflow-x: auto !important;
+    }
+
+    /* Selectbox & multiselect full width */
+    .stSelectbox, .stMultiSelect {
+        width: 100% !important;
+    }
+
+    /* Footer text */
+    footer, .footer-text {
+        font-size: 0.7rem !important;
+    }
+}
+
+/* ══════════════════════════════════════════════
+   EXTRA SMALL — max-width: 480px (headphone/watch-size excluded,
+   targets very narrow phone screens)
+   ══════════════════════════════════════════════ */
+@media (max-width: 480px) {
+
+    .hero-banner h1 {
+        font-size: 1rem !important;
+    }
+    .hero-banner p {
+        font-size: 0.75rem !important;
+    }
+
+    .section-header {
+        font-size: 0.8rem !important;
+        padding: 7px 10px !important;
+    }
+
+    [data-testid="stTabs"] [role="tab"] {
+        font-size: 0.72rem !important;
+        padding: 5px 6px !important;
+    }
+
+    [data-testid="metric-container"] label {
+        font-size: 0.7rem !important;
+    }
+    [data-testid="metric-container"] [data-testid="stMetricValue"] {
+        font-size: 1rem !important;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
