@@ -858,8 +858,7 @@ with tab2:
         <div class='info-box'>
         Probabilitas hujan dan indeks ONI dinormalisasi ke skala <b>0–1</b> menggunakan 
         <b>Min-Max Scaling</b> agar dapat dibandingkan dalam satu sumbu meski satuan aslinya berbeda 
-        (CH: 0–100%, ONI: −3 s/d +3). Metode ini identik dengan yang digunakan pada notebook 
-        <em>Analisis Probabilitas Hujan NTT</em>.
+        (CH: 0–100%, ONI: −3 s/d +3).
         </div>
         """, unsafe_allow_html=True)
 
