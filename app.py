@@ -874,7 +874,7 @@ with tab2:
 
                     fig_norm.add_trace(go.Scatter(
                         x=norm_df['Year'],
-                        y=norm_df[f'CH_{s}'],
+                        y=norm_df[f'Prob. Hujan_{s}'],
                         name=f'CH {s} (ternormalisasi)',
                         line=dict(color=color, width=2.5),
                         mode='lines+markers',
@@ -900,7 +900,7 @@ with tab2:
                     )
                     fig_norm.update_layout(
                         title=dict(
-                            text=f'Musim {s} ({SEASON_MONTHS[s]}) — CH vs ONI Ternormalisasi Min-Max',
+                            text=f'Musim {s} ({SEASON_MONTHS[s]}) — Prob. Hujan vs ONI Ternormalisasi Min-Max',
                             font=dict(size=13, color='#0f3460'), x=0.01
                         ),
                         xaxis=dict(title='Tahun', showgrid=True, gridcolor='#eee', range=[1984, 2016]),
