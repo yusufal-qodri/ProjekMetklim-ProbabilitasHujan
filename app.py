@@ -815,12 +815,12 @@ with tab2:
             )
             fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
             fig_dual.add_trace(
-                go.Bar(x=merged_view['Year'],
-                       y=merged_view[f'{sel_season}_CH'],
-                       name='Prob. Hujan (%)',
-                       marker_color='rgba(26,111,168,0.55)',
-                       marker_line=dict(width=0),
-                       hovertemplate='Prob: %{y:.1f}%<extra></extra>'),
+                go.Scatter(x=merged_view['Year'],
+                           y=merged_view[f'{sel_season}_CH'],
+                           name='prob.hujan (%)',
+                           line=dict(color='rgba(26,111,168,0.85)', width=2.5),
+                           mode='lines+markers', marker=dict(size=5),
+                           hovertemplate='prob.hujan: %{y:.1f}%<extra></extra>'),
                 secondary_y=False
             )
             fig_dual.add_trace(
@@ -841,7 +841,7 @@ with tab2:
                 legend=dict(orientation='h', y=1.1, x=0.5, xanchor='center'),
                 hovermode='x unified'
             )
-            fig_dual.update_yaxes(title_text='Probabilitas Hujan (%)',
+            fig_dual.update_yaxes(title_text='prob.hujan (%)',
                                   secondary_y=False, gridcolor='#eee')
             fig_dual.update_yaxes(title_text='ONI Index', secondary_y=True)
             st.plotly_chart(fig_dual, use_container_width=True)
@@ -875,11 +875,11 @@ with tab2:
                     fig_norm.add_trace(go.Scatter(
                         x=norm_df['Year'],
                         y=norm_df[f'CH_{s}'],
-                        name=f'CH {s} (ternormalisasi)',
+                        name=f'prob.hujan {s} (ternormalisasi)',
                         line=dict(color=color, width=2.5),
                         mode='lines+markers',
                         marker=dict(size=5),
-                        hovertemplate=f'<b>CH {s}</b><br>Tahun: %{{x}}<br>Nilai norm: %{{y:.3f}}<extra></extra>'
+                        hovertemplate=f'<b>prob.hujan {s}</b><br>Tahun: %{{x}}<br>Nilai norm: %{{y:.3f}}<extra></extra>'
                     ))
                     fig_norm.add_trace(go.Scatter(
                         x=norm_df['Year'],
@@ -900,7 +900,7 @@ with tab2:
                     )
                     fig_norm.update_layout(
                         title=dict(
-                            text=f'Musim {s} ({SEASON_MONTHS[s]}) — CH vs ONI Ternormalisasi Min-Max',
+                            text=f'Musim {s} ({SEASON_MONTHS[s]}) — prob.hujan vs ONI Ternormalisasi Min-Max',
                             font=dict(size=13, color='#0f3460'), x=0.01
                         ),
                         xaxis=dict(title='Tahun', showgrid=True, gridcolor='#eee', range=[1984, 2016]),
