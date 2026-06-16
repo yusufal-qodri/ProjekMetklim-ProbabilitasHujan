@@ -815,7 +815,7 @@ with tab2:
             )
             fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
             fig_dual.add_trace(
-                go.Scatter(x=merged_view['Year'],
+                go.Bar(x=merged_view['Year'],
                            y=merged_view[f'{sel_season}_CH'],
                            name='prob.hujan (%)',
                            line=dict(color='rgba(26,111,168,0.85)', width=2.5),
@@ -872,7 +872,7 @@ with tab2:
                     color = SEASON_COLORS[s]
                     fig_norm = go.Figure()
 
-                    fig_norm.add_trace(go.Scatter(
+                    fig_norm.add_trace(go.Bar(
                         x=norm_df['Year'],
                         y=norm_df[f'CH_{s}'],
                         name=f'prob.hujan {s} (ternormalisasi)',
