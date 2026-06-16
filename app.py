@@ -847,7 +847,7 @@ with tab2:
             st.plotly_chart(fig_dual, use_container_width=True)
 
         # ════════════════════════════════════════════
-        # NORMALISASI MIN-MAX — dari notebook analisis
+        # NORMALISASI MIN-MAX
         # ════════════════════════════════════════════
         st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
         st.markdown(
