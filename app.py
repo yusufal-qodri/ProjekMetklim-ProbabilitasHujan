@@ -872,13 +872,13 @@ with tab2:
                     color = SEASON_COLORS[s]
                     fig_norm = go.Figure()
 
-                    fig_norm.add_trace(go.Scatter(
+                    fig_norm.add_trace(go.Bar(
                         x=norm_df['Year'],
                         y=norm_df[f'CH_{s}'],
                         name=f'prob.hujan {s} (ternormalisasi)',
-                        line=dict(color=color, width=2.5),
-                        mode='lines+markers',
-                        marker=dict(size=5),
+                        marker_color=color,
+                        opacity=0.55,
+                        marker_line=dict(width=0),
                         hovertemplate=f'<b>prob.hujan {s}</b><br>Tahun: %{{x}}<br>Nilai norm: %{{y:.3f}}<extra></extra>'
                     ))
                     fig_norm.add_trace(go.Scatter(
