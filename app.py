@@ -816,11 +816,11 @@ with tab2:
             fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
             fig_dual.add_trace(
                 go.Bar(x=merged_view['Year'],
-                           y=merged_view[f'{sel_season}_CH'],
-                           name='prob.hujan (%)',
-                           line=dict(color='rgba(26,111,168,0.85)', width=2.5),
-                           mode='lines+markers', marker=dict(size=5),
-                           hovertemplate='prob.hujan: %{y:.1f}%<extra></extra>'),
+                       y=merged_view[f'{sel_season}_CH'],
+                       name='prob.hujan (%)',
+                       marker_color='rgba(26,111,168,0.55)',
+                       marker_line=dict(width=0),
+                       hovertemplate='prob.hujan: %{y:.1f}%<extra></extra>'),
                 secondary_y=False
             )
             fig_dual.add_trace(
@@ -872,7 +872,7 @@ with tab2:
                     color = SEASON_COLORS[s]
                     fig_norm = go.Figure()
 
-                    fig_norm.add_trace(go.Bar(
+                    fig_norm.add_trace(go.Scatter(
                         x=norm_df['Year'],
                         y=norm_df[f'CH_{s}'],
                         name=f'prob.hujan {s} (ternormalisasi)',
